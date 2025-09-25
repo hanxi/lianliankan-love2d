@@ -18,15 +18,15 @@ jobs:
       id: create-love
       run: |
         # 检查字体文件大小
-        if [ -f "font.ttc" ]; then
-          FONT_SIZE=$(stat -c%s "font.ttc" 2>/dev/null || stat -f%z "font.ttc" 2>/dev/null || echo "0")
+        if [ -f "font.otf" ]; then
+          FONT_SIZE=$(stat -c%s "font.otf" 2>/dev/null || stat -f%z "font.otf" 2>/dev/null || echo "0")
           echo "Font file size: $FONT_SIZE bytes"
           
           if [ "$FONT_SIZE" -gt 10485760 ]; then  # 10MB
             echo "Font file too large, excluding from build"
             zip -r ConnectGame.love main.lua
           else
-            zip -r ConnectGame.love main.lua font.ttc
+            zip -r ConnectGame.love main.lua font.otf
           fi
         else
           echo "No font file found, building without font"

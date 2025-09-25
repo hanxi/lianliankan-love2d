@@ -21,7 +21,7 @@ jobs:
         
     - name: Create .love file
       run: |
-        Compress-Archive -Path "main.lua", "font.ttc" -DestinationPath "game.love"
+        Compress-Archive -Path "main.lua", "font.otf" -DestinationPath "game.love"
         
     - name: Create Windows executable
       shell: cmd
@@ -54,7 +54,7 @@ jobs:
         
     - name: Create .love file
       run: |
-        zip -r game.love main.lua font.ttc
+        zip -r game.love main.lua font.otf
         
     - name: Create macOS app
       run: |
@@ -113,7 +113,7 @@ jobs:
         mkdir -p app/src/main/assets
         # 复制游戏文件
         cp ../main.lua app/src/main/assets/
-        cp ../font.ttc app/src/main/assets/
+        cp ../font.otf app/src/main/assets/
         
     - name: Configure app info
       run: |
