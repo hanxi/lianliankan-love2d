@@ -1,0 +1,166 @@
+name: Build Love2D Game
+
+on:
+  push:
+    branches: [ main, master ]
+    tags: [ 'v*' ]
+  pull_request:
+    branches: [ main, master ]
+  workflow_dispatch:
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Download Love2D Windows
+      run: |
+        Invoke-WebRequest -Uri "https://github.com/love2d/love/releases/download/11.4/love-11.4-win64.zip" -OutFile "love-win64.zip"
+        Expand-Archive -Path "love-win64.zip" -DestinationPath "."
+        
+    - name: Create .love file
+      run: |
+        Compress-Archive -Path "main.lua", "font.ttc" -DestinationPath "game.love"
+        
+    - name: Create Windows executable
+      shell: cmd
+      run: |
+        copy /b "love-11.4-win64\love.exe"+"game.love" "ConnectGame.exe"
+        
+    - name: Package Windows build
+      run: |
+        New-Item -ItemType Directory -Path "windows-build"
+        Move-Item "ConnectGame.exe" "windows-build/"
+        Copy-Item "love-11.4-win64\*.dll" "windows-build/"
+        Copy-Item "love-11.4-win64\license.txt" "windows-build/" -ErrorAction SilentlyContinue
+        Compress-Archive -Path "windows-build\*" -DestinationPath "ConnectGame-Windows.zip"
+        
+    - name: Upload Windows artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: windows-build
+        path: ConnectGame-Windows.zip
+
+  build-macos:
+    runs-on: macos-latest
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Download Love2D macOS
+      run: |
+        wget https://github.com/love2d/love/releases/download/11.4/love-11.4-macos.zip
+        unzip love-11.4-macos.zip
+        
+    - name: Create .love file
+      run: |
+        zip -r game.love main.lua font.ttc
+        
+    - name: Create macOS app
+      run: |
+        cp -r love.app ConnectGame.app
+        cp game.love ConnectGame.app/Contents/Resources/
+        
+        # Update Info.plist
+        /usr/libexec/PlistBuddy -c "Set :CFBundleName ConnectGame" ConnectGame.app/Contents/Info.plist
+        /usr/libexec/PlistBuddy -c "Set :CFBundleDisplayName 连连看游戏" ConnectGame.app/Contents/Info.plist
+        /usr/libexec/PlistBuddy -c "Set :CFBundleIdentifier com.example.connectgame" ConnectGame.app/Contents/Info.plist
+        
+    - name: Create DMG
+      run: |
+        mkdir dmg-contents
+        cp -r ConnectGame.app dmg-contents/
+        hdiutil create -volname "ConnectGame" -srcfolder dmg-contents -ov -format UDZO ConnectGame-macOS.dmg
+        
+    - name: Upload macOS artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: macos-build
+        path: ConnectGame-macOS.dmg
+
+  build-android:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Set up JDK 17
+      uses: actions/setup-java@v4
+      with:
+        java-version: '17'
+        distribution: 'temurin'
+        
+    - name: Setup Android SDK
+      uses: android-actions/setup-android@v3
+      with:
+        api-level: 33
+        build-tools: 33.0.0
+        
+    - name: Clone Love2D Android source
+      run: |
+        git clone --depth 1 https://github.com/love2d/love-android.git
+        cd love-android
+        
+    - name: Setup Android environment
+      run: |
+        cd love-android
+        # 创建local.properties文件
+        echo "sdk.dir=$ANDROID_HOME" > local.properties
+        
+    - name: Prepare game files
+      run: |
+        cd love-android
+        # 创建游戏资源目录
+        mkdir -p app/src/main/assets
+        # 复制游戏文件
+        cp ../main.lua app/src/main/assets/
+        cp ../font.ttc app/src/main/assets/
+        
+    - name: Configure app info
+      run: |
+        cd love-android
+        # 修改应用信息
+        sed -i 's/org\.love2d\.android/com.example.connectgame/g' app/src/main/AndroidManifest.xml
+        sed -i 's/LÖVE for Android/连连看游戏/g' app/src/main/res/values/strings.xml || true
+        # 修改包名
+        sed -i 's/applicationId "org\.love2d\.android"/applicationId "com.example.connectgame"/g' app/build.gradle
+        
+    - name: Grant execute permission
+      run: |
+        cd love-android
+        chmod +x gradlew
+        
+    - name: Build APK
+      run: |
+        cd love-android
+        ./gradlew assembleDebug --no-daemon --stacktrace
+        
+    - name: Copy APK
+      run: |
+        cd love-android
+        cp app/build/outputs/apk/debug/app-debug.apk ../ConnectGame-Android.apk
+        
+    - name: Upload Android artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: android-build
+        path: ConnectGame-Android.apk
+
+  release:
+    needs: [build-windows, build-macos, build-android]
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/')
+    steps:
+    - name: Download all artifacts
+      uses: actions/download-artifact@v4
+      
+    - name: Create Release
+      uses: softprops/action-gh-release@v1
+      with:
+        files: |
+          windows-build/ConnectGame-Windows.zip
+          macos-build/ConnectGame-macOS.dmg
+          android-build/ConnectGame-Android.apk
+        draft: false
+        prerelease: false
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

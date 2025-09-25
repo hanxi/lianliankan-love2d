@@ -1,0 +1,205 @@
+name: Optimized Love2D Build
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [ main, master ]
+    tags: [ 'v*' ]
+
+jobs:
+  build-love-file:
+    runs-on: ubuntu-latest
+    outputs:
+      love-file: ${{ steps.create-love.outputs.filename }}
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Create optimized .love file
+      id: create-love
+      run: |
+        # 检查字体文件大小
+        if [ -f "font.ttc" ]; then
+          FONT_SIZE=$(stat -c%s "font.ttc" 2>/dev/null || stat -f%z "font.ttc" 2>/dev/null || echo "0")
+          echo "Font file size: $FONT_SIZE bytes"
+          
+          if [ "$FONT_SIZE" -gt 10485760 ]; then  # 10MB
+            echo "Font file too large, excluding from build"
+            zip -r ConnectGame.love main.lua
+          else
+            zip -r ConnectGame.love main.lua font.ttc
+          fi
+        else
+          echo "No font file found, building without font"
+          zip -r ConnectGame.love main.lua
+        fi
+        
+        echo "filename=ConnectGame.love" >> $GITHUB_OUTPUT
+        
+    - name: Upload .love file
+      uses: actions/upload-artifact@v4
+      with:
+        name: love-file
+        path: ConnectGame.love
+
+  build-windows:
+    needs: build-love-file
+    runs-on: windows-latest
+    steps:
+    - name: Download .love file
+      uses: actions/download-artifact@v4
+      with:
+        name: love-file
+        
+    - name: Download Love2D Windows
+      run: |
+        Invoke-WebRequest -Uri "https://github.com/love2d/love/releases/download/11.4/love-11.4-win64.zip" -OutFile "love-win64.zip"
+        Expand-Archive -Path "love-win64.zip" -DestinationPath "."
+        
+    - name: Create Windows executable
+      shell: cmd
+      run: |
+        copy /b "love-11.4-win64\love.exe"+"ConnectGame.love" "ConnectGame.exe"
+        
+    - name: Package Windows build
+      run: |
+        New-Item -ItemType Directory -Path "windows-build"
+        Move-Item "ConnectGame.exe" "windows-build/"
+        Copy-Item "love-11.4-win64\*.dll" "windows-build/"
+        if (Test-Path "love-11.4-win64\license.txt") {
+          Copy-Item "love-11.4-win64\license.txt" "windows-build/"
+        }
+        Compress-Archive -Path "windows-build\*" -DestinationPath "ConnectGame-Windows.zip"
+        
+    - name: Upload Windows artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: windows-build
+        path: ConnectGame-Windows.zip
+
+  build-macos:
+    needs: build-love-file
+    runs-on: macos-latest
+    steps:
+    - name: Download .love file
+      uses: actions/download-artifact@v4
+      with:
+        name: love-file
+        
+    - name: Download Love2D macOS
+      run: |
+        wget -q https://github.com/love2d/love/releases/download/11.4/love-11.4-macos.zip
+        unzip -q love-11.4-macos.zip
+        
+    - name: Create macOS app
+      run: |
+        cp -r love.app ConnectGame.app
+        cp ConnectGame.love ConnectGame.app/Contents/Resources/
+        
+        # Update Info.plist with proper error handling
+        if [ -f "ConnectGame.app/Contents/Info.plist" ]; then
+          /usr/libexec/PlistBuddy -c "Set :CFBundleName ConnectGame" ConnectGame.app/Contents/Info.plist 2>/dev/null || true
+          /usr/libexec/PlistBuddy -c "Set :CFBundleDisplayName 连连看游戏" ConnectGame.app/Contents/Info.plist 2>/dev/null || true
+          /usr/libexec/PlistBuddy -c "Set :CFBundleIdentifier com.example.connectgame" ConnectGame.app/Contents/Info.plist 2>/dev/null || true
+          /usr/libexec/PlistBuddy -c "Set :CFBundleVersion 1.0.0" ConnectGame.app/Contents/Info.plist 2>/dev/null || true
+        fi
+        
+    - name: Create DMG
+      run: |
+        mkdir -p dmg-contents
+        cp -r ConnectGame.app dmg-contents/
+        
+        # Create Applications symlink for easy installation
+        ln -s /Applications dmg-contents/Applications
+        
+        # Create DMG with proper settings
+        hdiutil create -volname "ConnectGame" -srcfolder dmg-contents -ov -format UDZO -imagekey zlib-level=9 ConnectGame-macOS.dmg
+        
+    - name: Upload macOS artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: macos-build
+        path: ConnectGame-macOS.dmg
+
+  build-linux:
+    needs: build-love-file
+    runs-on: ubuntu-latest
+    steps:
+    - name: Download .love file
+      uses: actions/download-artifact@v4
+      with:
+        name: love-file
+        
+    - name: Create Linux AppImage
+      run: |
+        # Download Love2D Linux
+        wget -q https://github.com/love2d/love/releases/download/11.4/love-11.4-x86_64.AppImage
+        chmod +x love-11.4-x86_64.AppImage
+        
+        # Extract AppImage
+        ./love-11.4-x86_64.AppImage --appimage-extract
+        
+        # Copy game file
+        cp ConnectGame.love squashfs-root/
+        
+        # Modify AppRun to load our game
+        cat > squashfs-root/AppRun << 'EOF'
+#!/bin/bash
+SELF=$(readlink -f "$0")
+HERE=${SELF%/*}
+export PATH="${HERE}/usr/bin/:${PATH}"
+export LD_LIBRARY_PATH="${HERE}/usr/lib/:${LD_LIBRARY_PATH}"
+cd "${HERE}"
+exec "${HERE}/usr/bin/love" "${HERE}/ConnectGame.love" "$@"
+EOF
+        chmod +x squashfs-root/AppRun
+        
+        # Create new AppImage
+        wget -q https://github.com/AppImage/AppImageKit/releases/download/continuous/appimagetool-x86_64.AppImage
+        chmod +x appimagetool-x86_64.AppImage
+        ./appimagetool-x86_64.AppImage squashfs-root ConnectGame-Linux.AppImage
+        
+    - name: Upload Linux artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: linux-build
+        path: ConnectGame-Linux.AppImage
+
+  release:
+    needs: [build-windows, build-macos, build-linux]
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/')
+    steps:
+    - name: Download all artifacts
+      uses: actions/download-artifact@v4
+      
+    - name: Create Release
+      uses: softprops/action-gh-release@v1
+      with:
+        files: |
+          windows-build/ConnectGame-Windows.zip
+          macos-build/ConnectGame-macOS.dmg
+          linux-build/ConnectGame-Linux.AppImage
+          love-file/ConnectGame.love
+        draft: false
+        prerelease: false
+        body: |
+          ## 连连看游戏 - 多平台发布版本
+          
+          ### 下载说明
+          - **Windows**: 下载 `ConnectGame-Windows.zip`，解压后运行 `ConnectGame.exe`
+          - **macOS**: 下载 `ConnectGame-macOS.dmg`，挂载后拖拽到应用程序文件夹
+          - **Linux**: 下载 `ConnectGame-Linux.AppImage`，添加执行权限后直接运行
+          - **通用**: 下载 `ConnectGame.love`，需要先安装 Love2D 引擎
+          
+          ### 系统要求
+          - Windows 7 或更高版本
+          - macOS 10.9 或更高版本  
+          - Linux (64位)
+          
+          ### 游戏特性
+          - 经典连连看玩法
+          - 6种颜色方块
+          - 5分钟倒计时
+          - 智能路径查找算法
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

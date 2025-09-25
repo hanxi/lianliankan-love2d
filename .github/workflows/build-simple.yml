@@ -1,0 +1,50 @@
+name: Simple Love2D Build
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [ main, master ]
+
+jobs:
+  build-all:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Create .love file
+      run: |
+        zip -r ConnectGame.love main.lua font.ttc
+        
+    - name: Download Love2D binaries
+      run: |
+        # Windows
+        wget -O love-win64.zip https://github.com/love2d/love/releases/download/11.4/love-11.4-win64.zip
+        unzip love-win64.zip
+        
+        # macOS  
+        wget -O love-macos.zip https://github.com/love2d/love/releases/download/11.4/love-11.4-macos.zip
+        unzip love-macos.zip
+        
+    - name: Build Windows
+      run: |
+        cat love-11.4-win64/love.exe ConnectGame.love > ConnectGame.exe
+        mkdir windows-dist
+        cp ConnectGame.exe windows-dist/
+        cp love-11.4-win64/*.dll windows-dist/
+        cp love-11.4-win64/license.txt windows-dist/
+        zip -r ConnectGame-Windows.zip windows-dist/
+        
+    - name: Build macOS
+      run: |
+        cp -r love.app ConnectGame.app
+        cp ConnectGame.love ConnectGame.app/Contents/Resources/
+        zip -r ConnectGame-macOS.zip ConnectGame.app/
+        
+    - name: Upload builds
+      uses: actions/upload-artifact@v4
+      with:
+        name: game-builds
+        path: |
+          ConnectGame-Windows.zip
+          ConnectGame-macOS.zip
+          ConnectGame.love
